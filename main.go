@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -79,13 +80,25 @@ func (d Download) Do() error {
 	}
 	fmt.Println(sections)
 
+	var wg sync.WaitGroup
 	for i, s := range sections {
-		err := d.downloadSection(i, s)
-		if err != nil {
-			return fmt.Errorf("Cannot download the file, response is %v", resp.StatusCode)
-		}
+		wg.Add(1)
+		//store current values as they will keep changing
+		//i := i
+		//s := s
+		go func() {
+			defer wg.Done()
+			err := d.downloadSection(i, s)
+			if err != nil {
+				panic(err)
+			}
+		}()
 	}
-
+	wg.Wait()
+	err = d.mergeFiles(sections)
+	if err != nil {
+		return fmt.Errorf("Cannot merge files!")
+	}
 	return nil
 }
 
@@ -124,4 +137,26 @@ func (d Download) downloadSection(i int, s [2]int) error {
 	}
 
 	return nil
+}
+
+// merge downloaded files
+func (d Download) mergeFiles(sections [][2]int) error {
+	f, err := os.OpenFile(d.TargetPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("Can't open file, response is %v", err)
+	}
+	defer f.Close()
+	for i := range sections {
+		b, err := os.ReadFile(fmt.Sprintf("section-%v.tmp", i))
+		if err != nil {
+			return fmt.Errorf("Can't read file, response is %v", err)
+		}
+		n, err := f.Write(b)
+		if err != nil {
+			return fmt.Errorf("Can't write file, response is %v", err)
+		}
+		fmt.Printf("%v bytes merged\n", n)
+	}
+	return nil
+
 }
